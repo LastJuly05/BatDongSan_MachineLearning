@@ -30,26 +30,50 @@ def predict():
         quality = int(data.get('quality', 5))
         year = int(data.get('year', 2000))
         rooms = int(data.get('rooms', 3))
+        bathrooms = float(data.get('bathrooms', 2))
+        garage_cars = int(data.get('garage_cars', 1))
+        bldg_type = data.get('bldg_type')
+        neighborhood = data.get('neighborhood')
+        house_style = data.get('house_style')
         
         # 1. Tạo DataFrame với giá trị TRUNG VỊ thị trường làm nền
         input_df = pd.DataFrame([medians.values], columns=features)
         
-        # 2. Cập nhật các thông số người dùng nhập vào
+        # 2. Cập nhật các thông số người dùng nhập vào (Số liệu)
         if 'GrLivArea' in features: input_df['GrLivArea'] = area
         if 'OverallQual' in features: input_df['OverallQual'] = quality
         if 'YearBuilt' in features: input_df['YearBuilt'] = year
         if 'TotRmsAbvGrd' in features: input_df['TotRmsAbvGrd'] = rooms
+        if 'GarageCars' in features: input_df['GarageCars'] = garage_cars
+        if 'TotalBath' in features: input_df['TotalBath'] = bathrooms
+
+        # 3. Cập nhật các thông số phân loại (Categorical - One Hot Encoding)
+        # Reset các cột liên quan về 0
+        cat_features = [f for f in features if f.startswith('BldgType_') or 
+                        f.startswith('Neighborhood_') or f.startswith('HouseStyle_')]
+        for f in cat_features:
+            input_df[f] = 0
+            
+        # Kích hoạt cột được chọn
+        if bldg_type:
+            target_col = f'BldgType_{bldg_type}'
+            if target_col in features: input_df[target_col] = 1
+            
+        if neighborhood:
+            target_col = f'Neighborhood_{neighborhood}'
+            if target_col in features: input_df[target_col] = 1
+            
+        if house_style:
+            target_col = f'HouseStyle_{house_style}'
+            if target_col in features: input_df[target_col] = 1
         
-        # 3. TÍNH TOÁN CÁC SIÊU ĐẶC TRƯNG (Đồng bộ với train_models.py)
+        # 4. TÍNH TOÁN CÁC SIÊU ĐẶC TRƯNG (Đồng bộ với train_models.py)
         # Giả định năm bán là median của YrSold
         yr_sold = input_df['YrSold'].iloc[0]
         
         input_df['TotalSF'] = input_df['TotalBsmtSF'] + input_df['1stFlrSF'] + input_df['2ndFlrSF']
         # Cập nhật TotalSF dựa trên diện tích mới (GrLivArea xấp xỉ 1st+2nd)
         input_df['TotalSF'] = input_df['TotalBsmtSF'] + area 
-        
-        input_df['TotalBath'] = input_df['FullBath'] + (0.5 * input_df['HalfBath']) + \
-                               input_df['BsmtFullBath'] + (0.5 * input_df['BsmtHalfBath'])
         
         input_df['HouseAge'] = yr_sold - year
         input_df['RemodAge'] = yr_sold - input_df['YearRemodAdd'].iloc[0]
