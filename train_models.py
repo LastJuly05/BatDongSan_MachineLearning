@@ -1,3 +1,7 @@
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+
 import pandas as pd
 import numpy as np
 import joblib
@@ -8,7 +12,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from sklearn.neural_network import MLPRegressor
 from xgboost import XGBRegressor
-from sklearn.metrics import r2_score
+from sklearn.metrics import r2_score, mean_absolute_error
 
 def load_data():
     file_path = 'train.csv'
@@ -16,10 +20,8 @@ def load_data():
     return df
 
 def feature_engineering(df):
-    # 1. Loại bỏ nhiễu (Outliers) - Kỹ thuật quan trọng trên Kaggle
-    # Loại bỏ những căn nhà quá rộng (>4000 sqft) nhưng giá lại quá rẻ
     if 'GrLivArea' in df.columns and 'SalePrice' in df.columns:
-        df = df.drop(df[(df['GrLivArea']>4000) & (df['SalePrice']<300000)].index)
+        df = df.drop(df[(df['GrLivArea'] > 4000) & (df['SalePrice'] < 300000)].index)
 
     # 2. Tạo đặc trưng mới (Siêu đặc trưng)
     # Tổng diện tích thực tế (Hầm + Tầng 1 + Tầng 2)
@@ -53,7 +55,7 @@ def preprocess_data(df):
     # Xử lý giá trị thiếu
     numeric_cols = X.select_dtypes(include=['number']).columns
     X[numeric_cols] = X[numeric_cols].fillna(X[numeric_cols].median())
-    categorical_cols = X.select_dtypes(include=['object']).columns
+    categorical_cols = X.select_dtypes(include=['object', 'str']).columns
     X[categorical_cols] = X[categorical_cols].fillna('None')
     
     # One-Hot Encoding
@@ -88,21 +90,41 @@ def train_advanced_models(X_train, y_train):
             "model": XGBRegressor(random_state=42),
             "params": {'n_estimators': [500], 'learning_rate': [0.05], 'max_depth': [3, 4]}
         },
+        # FIX: Dùng solver='lbfgs' thay vì 'adam'
+        # lbfgs phù hợp với dataset nhỏ/vừa (<10K samples), hội tụ ổn định
+        # không cần early_stopping, không bị lỗi multiprocessing trên Windows
         "MLP": {
-            "model": MLPRegressor(max_iter=2000, random_state=42),
-            "params": {'hidden_layer_sizes': [(100, 50)], 'alpha': [0.005]}
+            "model": MLPRegressor(
+                max_iter=5000,
+                random_state=42,
+                solver='lbfgs',   # Quasi-Newton, hội tụ tốt với dataset nhỏ
+                tol=1e-4,
+            ),
+            "params": {
+                'hidden_layer_sizes': [(100,), (100, 50), (200, 100)],
+                'alpha': [0.001, 0.01, 0.1],   # L2 regularization
+                'activation': ['relu', 'tanh'],
+            }
         }
     }
     
     best_models = {}
-    print("\n--- BẮT ĐẦU HUẤN LUYỆN SIÊU CẤP (KAGGLE STYLE) ---")
+    print("\n--- BẮT ĐẦU HUẤN LUYỆN ---")
     
     for name, config in param_grids.items():
         print(f"Đang tối ưu {name}...")
-        grid_search = GridSearchCV(config['model'], config['params'], cv=5, scoring='r2', n_jobs=-1)
+        grid_search = GridSearchCV(
+            config['model'],
+            config['params'],
+            cv=5,
+            scoring='r2',
+            n_jobs=1          # Windows: dùng 1 process để tránh lỗi multiprocessing
+        )
         grid_search.fit(X_train, y_train)
         best_models[name] = grid_search.best_estimator_
-        print(f"  > R2 tối ưu: {grid_search.best_score_:.4f}")
+        print(f"  > R2 tối ưu (CV, log-space): {grid_search.best_score_:.4f}")
+        if name == "MLP":
+            print(f"  > Best params: {grid_search.best_params_}")
         
     return best_models
 
@@ -118,10 +140,27 @@ if __name__ == "__main__":
     joblib.dump(feature_names, 'features.pkl')
     joblib.dump(medians, 'medians.pkl')
     
+    # Đánh giá trên log-space (thống nhất với CV) và giá trị gốc (MAE dễ hiểu)
     print("\nĐÁNH GIÁ CUỐI CÙNG TRÊN TẬP TEST:")
+    print(f"{'Model':<15} {'R2 (log)':<14} {'R2 (gốc)':<14} {'MAE (gốc, USD)'}")
+    print("-" * 60)
+    
+    y_test_orig = np.expm1(y_test)
+    
     for name, model in trained_models.items():
-        preds = np.expm1(model.predict(X_test))
-        r2 = r2_score(np.expm1(y_test), preds)
-        print(f"- {name}: {r2:.4f}")
+        # Dự đoán ở log-space
+        preds_log = model.predict(X_test)
         
-    print("\n--- HOÀN TẤT! AI BÂY GIỜ ĐÃ LÀ MỘT CHUYÊN GIA THỰC THỤ ---")
+        # R2 trên log-space (nhất quán với CV scoring)
+        r2_log = r2_score(y_test, preds_log)
+        
+        # Chuyển về giá trị gốc
+        preds_orig = np.expm1(preds_log)
+        
+        # R2 và MAE trên giá trị gốc
+        r2_orig = r2_score(y_test_orig, preds_orig)
+        mae_orig = mean_absolute_error(y_test_orig, preds_orig)
+        
+        print(f"{name:<15} {r2_log:<14.4f} {r2_orig:<14.4f} ${mae_orig:,.0f}")
+        
+    print("\n--- HOÀN TẤT ---")
