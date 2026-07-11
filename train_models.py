@@ -3,6 +3,7 @@ import numpy as np
 import joblib
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
+from sklearn.feature_selection import SelectKBest, f_regression
 from sklearn.linear_model import Lasso
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
@@ -61,7 +62,7 @@ def preprocess_data(df):
     X[numeric_cols] = X[numeric_cols].fillna(medians)
 
     # Xử lý giá trị thiếu cho Biến Phân Loại
-    categorical_cols = X.select_dtypes(include=['object', 'category']).columns
+    categorical_cols = X.select_dtypes(include=['object', 'category', 'str']).columns
     X[categorical_cols] = X[categorical_cols].fillna('None')
 
     # One-Hot Encoding toàn bộ X (Để nhất quán cho việc split)
@@ -80,10 +81,19 @@ def preprocess_data(df):
 
 
 def train_advanced_models(X_train, y_train):
+    # --- Chọn đặc trưng riêng cho SVR/MLP (giảm nhiễu do one-hot quá nhiều chiều) ---
+    # SVR và MLP rất nhạy với dữ liệu nhiều chiều/thưa (sau one-hot có thể 200-300+ cột),
+    # trong khi RandomForest/XGBoost tự động bỏ qua đặc trưng không quan trọng và Lasso tự
+    # triệt tiêu hệ số về 0. Nên ta chọn ra top-k đặc trưng tốt nhất riêng cho SVR/MLP.
+    k_features = min(60, X_train.shape[1])
+    selector = SelectKBest(score_func=f_regression, k=k_features)
+    X_train_selected = selector.fit_transform(X_train, y_train)
+
     param_grids = {
         "Lasso": {
             "model": Lasso(max_iter=50000),
-            "params": {'alpha': [0.0001, 0.0005, 0.001, 0.005]}
+            "params": {'alpha': [0.0001, 0.0005, 0.001, 0.005]},
+            "use_selected": False
         },
         "RandomForest": {
             "model": RandomForestRegressor(random_state=42),
@@ -92,15 +102,17 @@ def train_advanced_models(X_train, y_train):
                 'max_depth': [20, None],
                 'max_features': [1.0, 'sqrt'],
                 'min_samples_split': [2, 5]
-            }
+            },
+            "use_selected": False
         },
         "SVR": {
-            "model": SVR(),
+            "model": SVR(kernel='rbf'),
             "params": {
-                'C': [100, 500, 1000],
-                'gamma': ['scale', 0.01],
-                'epsilon': [0.01, 0.05]
-            }
+                'C': [1, 5, 10, 50, 100],
+                'gamma': ['scale', 'auto', 0.001, 0.01, 0.1],
+                'epsilon': [0.01, 0.05, 0.1]
+            },
+            "use_selected": True
         },
         "XGBoost": {
             "model": XGBRegressor(random_state=42),
@@ -110,20 +122,22 @@ def train_advanced_models(X_train, y_train):
                 'max_depth': [4, 5, 6],
                 'subsample': [0.8, 1.0],
                 'colsample_bytree': [0.8, 1.0]
-            }
+            },
+            "use_selected": False
         },
         "MLP": {
             "model": MLPRegressor(
-                max_iter=5000,
+                max_iter=8000,
                 random_state=42,
                 solver='lbfgs',   # Quasi-Newton, hội tụ tốt với dataset nhỏ
-                tol=1e-4,
+                tol=1e-5,
             ),
             "params": {
-                'hidden_layer_sizes': [(100,), (100, 50), (200, 100)],
-                'alpha': [0.001, 0.01, 0.1],   # L2 regularization
+                'hidden_layer_sizes': [(50,), (100,), (100, 50)],
+                'alpha': [0.01, 0.1, 1.0, 5.0],   # tăng L2 regularization để chống overfit
                 'activation': ['relu', 'tanh'],
-            }
+            },
+            "use_selected": True
         }
     }
 
@@ -132,6 +146,8 @@ def train_advanced_models(X_train, y_train):
 
     for name, config in param_grids.items():
         print(f"Đang tối ưu {name}...")
+        X_fit = X_train_selected if config["use_selected"] else X_train
+
         grid_search = GridSearchCV(
             config['model'],
             config['params'],
@@ -139,34 +155,38 @@ def train_advanced_models(X_train, y_train):
             scoring='r2',
             n_jobs=1  # Giữ nguyên 1 để an toàn trên Windows/Kaggle notebook lẻ tẻ
         )
-        grid_search.fit(X_train, y_train)
+        grid_search.fit(X_fit, y_train)
         best_models[name] = grid_search.best_estimator_
         print(f"  > R2 tối ưu (CV, log-space): {grid_search.best_score_:.4f}")
 
-    return best_models
+    return best_models, selector
 
 
 if __name__ == "__main__":
     df = load_data()
     X_train, X_test, y_train, y_test, scaler, feature_names, medians = preprocess_data(df)
 
-    trained_models = train_advanced_models(X_train, y_train)
+    trained_models, selector = train_advanced_models(X_train, y_train)
 
     print("\n--- ĐANG LƯU KẾT QUẢ ---")
     joblib.dump(trained_models, 'all_models.pkl')
     joblib.dump(scaler, 'scaler.pkl')
     joblib.dump(list(feature_names), 'features.pkl')  # Lưu dưới dạng list để tiện re-index sau này
     joblib.dump(medians, 'medians.pkl')
+    joblib.dump(selector, 'selector.pkl')  # Cần để transform dữ liệu mới cho SVR/MLP lúc predict
 
-    # ĐÁNH GIÁ CUỐI CÙNG (Đã sửa lỗi thụt lề tại đây)
+    # ĐÁNH GIÁ CUỐI CÙNG
     print("\nĐÁNH GIÁ CUỐI CÙNG TRÊN TẬP TEST:")
     print(f"{'Model':<15} {'R2 (log)':<14} {'R2 (gốc)':<14} {'MAE (gốc, USD)'}")
     print("-" * 60)
 
     y_test_orig = np.expm1(y_test)
+    models_using_selected_features = {"SVR", "MLP"}
 
     for name, model in trained_models.items():
-        preds_log = model.predict(X_test)
+        X_eval = selector.transform(X_test) if name in models_using_selected_features else X_test
+
+        preds_log = model.predict(X_eval)
         r2_log = r2_score(y_test, preds_log)
 
         preds_orig = np.expm1(preds_log)
@@ -176,4 +196,3 @@ if __name__ == "__main__":
         print(f"{name:<15} {r2_log:<14.4f} {r2_orig:<14.4f} ${mae_orig:,.0f}")
 
     print("\n--- HOÀN TẤT ---")
-    #
