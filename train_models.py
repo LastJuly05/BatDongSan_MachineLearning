@@ -114,15 +114,15 @@ def train_advanced_models(X_train, y_train):
         },
         "MLP": {
             "model": MLPRegressor(
-                max_iter=10000,
+                max_iter=5000,
                 random_state=42,
-                solver='lbfgs',
-                tol=1e-5,
+                solver='lbfgs',   # Quasi-Newton, hội tụ tốt với dataset nhỏ
+                tol=1e-4,
             ),
             "params": {
-                'hidden_layer_sizes': [(256,), (256, 128)],
-                'alpha': [0.001, 0.01],
-                'activation': ['relu'],
+                'hidden_layer_sizes': [(100,), (100, 50), (200, 100)],
+                'alpha': [0.001, 0.01, 0.1],   # L2 regularization
+                'activation': ['relu', 'tanh'],
             }
         }
     }
