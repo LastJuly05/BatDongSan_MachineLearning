@@ -19,14 +19,11 @@ def load_data():
 
 
 def feature_engineering(df):
-    # Tránh thay đổi trực tiếp trên dataframe gốc bằng slice ẩn
     df = df.copy()
 
     if 'GrLivArea' in df.columns and 'SalePrice' in df.columns:
         df = df.drop(df[(df['GrLivArea'] > 4000) & (df['SalePrice'] < 300000)].index)
 
-    # Tạo đặc trưng mới (Siêu đặc trưng)
-    # Thêm fillna(0) đề phòng trường hợp các cột này bị trống trước khi cộng
     df['TotalBsmtSF'] = df['TotalBsmtSF'].fillna(0)
     df['1stFlrSF'] = df['1stFlrSF'].fillna(0)
     df['2ndFlrSF'] = df['2ndFlrSF'].fillna(0)
@@ -45,34 +42,28 @@ def feature_engineering(df):
 
 
 def preprocess_data(df):
-    # Thực hiện Feature Engineering
     df = feature_engineering(df)
 
-    # Loại bỏ Id nếu có
     if 'Id' in df.columns:
         df = df.drop(['Id'], axis=1)
 
-    # Tách X, y
     y = np.log1p(df['SalePrice'])
     X = df.drop('SalePrice', axis=1)
 
-    # Xử lý giá trị thiếu cho Biến Số
+    # Xử lý giá trị thiếu
     numeric_cols = X.select_dtypes(include=['number']).columns
     medians = X[numeric_cols].median()
     X[numeric_cols] = X[numeric_cols].fillna(medians)
 
-    # Xử lý giá trị thiếu cho Biến Phân Loại
     categorical_cols = X.select_dtypes(include=['object', 'category', 'str']).columns
     X[categorical_cols] = X[categorical_cols].fillna('None')
 
-    # One-Hot Encoding toàn bộ X (Để nhất quán cho việc split)
+    # One-Hot Encoding
     X = pd.get_dummies(X)
     feature_names = X.columns
 
-    # Chia tập Train/Test
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
-    # Chuẩn hóa dữ liệu
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
@@ -81,10 +72,7 @@ def preprocess_data(df):
 
 
 def train_advanced_models(X_train, y_train):
-    # --- Chọn đặc trưng riêng cho SVR/MLP (giảm nhiễu do one-hot quá nhiều chiều) ---
-    # SVR và MLP rất nhạy với dữ liệu nhiều chiều/thưa (sau one-hot có thể 200-300+ cột),
-    # trong khi RandomForest/XGBoost tự động bỏ qua đặc trưng không quan trọng và Lasso tự
-    # triệt tiêu hệ số về 0. Nên ta chọn ra top-k đặc trưng tốt nhất riêng cho SVR/MLP.
+    # Chọn đặc trưng riêng cho SVR/MLP (giảm nhiễu do one-hot quá nhiều chiều)
     k_features = min(60, X_train.shape[1])
     selector = SelectKBest(score_func=f_regression, k=k_features)
     X_train_selected = selector.fit_transform(X_train, y_train)
@@ -129,12 +117,12 @@ def train_advanced_models(X_train, y_train):
             "model": MLPRegressor(
                 max_iter=8000,
                 random_state=42,
-                solver='lbfgs',   # Quasi-Newton, hội tụ tốt với dataset nhỏ
+                solver='lbfgs',
                 tol=1e-5,
             ),
             "params": {
                 'hidden_layer_sizes': [(50,), (100,), (100, 50)],
-                'alpha': [0.01, 0.1, 1.0, 5.0],   # tăng L2 regularization để chống overfit
+                'alpha': [0.01, 0.1, 1.0, 5.0],
                 'activation': ['relu', 'tanh'],
             },
             "use_selected": True
@@ -153,7 +141,7 @@ def train_advanced_models(X_train, y_train):
             config['params'],
             cv=5,
             scoring='r2',
-            n_jobs=1  # Giữ nguyên 1 để an toàn trên Windows/Kaggle notebook lẻ tẻ
+            n_jobs=1
         )
         grid_search.fit(X_fit, y_train)
         best_models[name] = grid_search.best_estimator_
@@ -171,11 +159,10 @@ if __name__ == "__main__":
     print("\n--- ĐANG LƯU KẾT QUẢ ---")
     joblib.dump(trained_models, 'all_models.pkl')
     joblib.dump(scaler, 'scaler.pkl')
-    joblib.dump(list(feature_names), 'features.pkl')  # Lưu dưới dạng list để tiện re-index sau này
+    joblib.dump(list(feature_names), 'features.pkl')
     joblib.dump(medians, 'medians.pkl')
-    joblib.dump(selector, 'selector.pkl')  # Cần để transform dữ liệu mới cho SVR/MLP lúc predict
+    joblib.dump(selector, 'selector.pkl')
 
-    # ĐÁNH GIÁ CUỐI CÙNG
     print("\nĐÁNH GIÁ CUỐI CÙNG TRÊN TẬP TEST:")
     print(f"{'Model':<15} {'R2 (log)':<14} {'R2 (gốc)':<14} {'MAE (gốc, USD)'}")
     print("-" * 60)

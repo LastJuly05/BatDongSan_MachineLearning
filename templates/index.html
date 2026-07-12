@@ -488,7 +488,7 @@
                 img.style.opacity = 1;
                 loading.style.display = 'none';
             };
-        }, 50); // Tốc độ cực nhanh vì ảnh có sẵn trong máy
+        }, 50);
     }
 
     async function predict() {
@@ -521,7 +521,6 @@
 
             const data = await response.json();
             
-            // Hiển thị kết quả ngay khi nhận được dữ liệu (giảm delay)
             loading.style.display = 'none';
             if (data.predictions) {
                 resGrid.innerHTML = '';
@@ -555,7 +554,6 @@
         }
     }
 
-    // Khởi tạo
     updatePreview();
 </script>
 </body>
