@@ -10,18 +10,20 @@ try:
     all_models = joblib.load('all_models.pkl')
     scaler = joblib.load('scaler.pkl')
     features = joblib.load('features.pkl')
-    medians = joblib.load('medians.pkl') # Nạp giá trị trung bình thị trường
+    medians = joblib.load('medians.pkl')  # Nạp giá trị trung bình thị trường
     selector = joblib.load('selector.pkl')
 except:
     all_models = scaler = features = medians = selector = None
+
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
+
 @app.route('/predict', methods=['POST'])
 def predict():
-    if all_models is None or scaler is None or features is None or medians is None:
+    if all_models is None or scaler is None or features is None or medians is None or selector is None:
         return jsonify({'error': 'Hệ thống chưa sẵn sàng. Vui lòng chạy train_models.py trước.'})
 
     try:
@@ -36,9 +38,12 @@ def predict():
         bldg_type = data.get('bldg_type')
         neighborhood = data.get('neighborhood')
         house_style = data.get('house_style')
-        
+
         # 1. Tạo DataFrame với giá trị TRUNG VỊ thị trường làm nền
-        input_df = pd.DataFrame([medians.values], columns=features)
+        input_df = pd.DataFrame(0, index=[0], columns=features)
+        for col in medians.index:
+            if col in features:
+                input_df[col] = medians[col]
 
         # 2. Cập nhật các thông số người dùng nhập vào (Số liệu)
         if 'GrLivArea' in features: input_df['GrLivArea'] = area
@@ -88,16 +93,19 @@ def predict():
 
         # 5. Dự đoán bằng cả 5 thuật toán
         predictions = {}
+        models_using_selected_features = {"SVR", "MLP"}
         for name, model in all_models.items():
-            pred_log = model.predict(input_scaled)[0]
+            X_eval = selector.transform(input_scaled) if name in models_using_selected_features else input_scaled
+            pred_log = model.predict(X_eval)[0]
             real_price = np.expm1(pred_log)
             predictions[name] = "{:,.0f}".format(real_price)
-            
+
         return jsonify({'predictions': predictions})
     except Exception as e:
         import traceback
         print(traceback.format_exc())
         return jsonify({'error': str(e)})
+
 
 if __name__ == '__main__':
     app.run(debug=True)

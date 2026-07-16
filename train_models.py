@@ -74,7 +74,7 @@ def preprocess_data(df):
 def train_advanced_models(X_train, y_train):
     # Chọn đặc trưng riêng cho SVR/MLP (giảm nhiễu do one-hot quá nhiều chiều)
     k_features = min(60, X_train.shape[1])
-    selector = SelectKBest(score_func=f_regression, k=k_features)
+    selector = SeelctKBest(score_func=f_regression, k=k_features)
     X_train_selected = selector.fit_transform(X_train, y_train)
 
     param_grids = {
