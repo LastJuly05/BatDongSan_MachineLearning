@@ -40,7 +40,7 @@ numeric_no_target = [c for c in numeric_cols if c not in ("Id", "SalePrice")]
 
 
 
-# 1. TỔNG QUAN DỮ LIỆU – Missing values heatmap
+# 1. TỔNG QUAN DỮ LIỆU
 def plot_missing_values():
     miss = df.isnull().sum()
     miss = miss[miss > 0].sort_values(ascending=False)
@@ -478,5 +478,5 @@ if __name__ == "__main__":
         fn()
 
     print("\n" + "=" * 60)
-    print(f"  ✔  HOÀN TẤT! {len(steps)} sơ đồ đã được lưu vào: ./{OUTPUT_DIR}/")
+    print(f"{len(steps)} sơ đồ đã được lưu vào: ./{OUTPUT_DIR}/")
     print("=" * 60)
